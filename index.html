@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Assistant Axis Explorer</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --dim: #8b949e; --accent: #58a6ff;
+    --red: #f85149; --green: #3fb950; --yellow: #d29922;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+
+  /* Header */
+  .header { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+    background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .header h1 { font-size: 18px; font-weight: 600; white-space: nowrap; }
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .controls label { font-size: 12px; color: var(--dim); }
+  .controls select, .controls input {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 8px; font-size: 13px; }
+  .controls select:focus, .controls input:focus { border-color: var(--accent); outline: none; }
+  .search-wrap { position: relative; }
+  .search-wrap input { padding-left: 28px; width: 160px; }
+  .search-icon { position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
+    color: var(--dim); font-size: 14px; pointer-events: none; }
+
+  /* Main area */
+  .main { display: flex; flex: 1; overflow: hidden; }
+  .scatter-panel { flex: 1; min-width: 0; }
+  #scatter { width: 100%; height: 100%; }
+
+  /* Detail panel */
+  .detail-panel { width: 380px; background: var(--surface); border-left: 1px solid var(--border);
+    overflow-y: auto; flex-shrink: 0; transition: width 0.2s; }
+  .detail-panel.collapsed { width: 0; padding: 0; border: none; }
+  .detail-header { padding: 16px; border-bottom: 1px solid var(--border); }
+  .detail-header h2 { font-size: 20px; margin-bottom: 4px; }
+  .detail-header .desc { font-size: 13px; color: var(--dim); line-height: 1.4; }
+  .scores-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 12px 16px; }
+  .score-card { background: var(--bg); border-radius: 6px; padding: 8px; text-align: center; }
+  .score-card .label { font-size: 10px; color: var(--dim); text-transform: uppercase; }
+  .score-card .value { font-size: 16px; font-weight: 600; }
+  .score-card .pctile { font-size: 11px; color: var(--dim); }
+  .examples { padding: 16px; }
+  .examples h3 { font-size: 13px; color: var(--dim); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .example { margin-bottom: 16px; }
+  .example .q { font-size: 12px; color: var(--accent); margin-bottom: 4px; font-weight: 500; }
+  .example .a { font-size: 13px; color: var(--text); line-height: 1.5;
+    background: var(--bg); border-radius: 6px; padding: 10px; border-left: 3px solid var(--border);
+    max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+  .no-selection { padding: 40px 20px; text-align: center; color: var(--dim); }
+
+  /* Stats bar */
+  .stats-bar { display: flex; gap: 24px; padding: 8px 20px;
+    background: var(--surface); border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--dim); flex-shrink: 0; }
+  .stat { display: flex; gap: 4px; }
+  .stat .val { color: var(--text); font-weight: 600; }
+
+  /* Plotly overrides */
+  .js-plotly-plot .plotly .modebar { top: 4px !important; right: 4px !important; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Assistant Axis Explorer</h1>
+  <div class="controls">
+    <div>
+      <label>Dataset</label><br>
+      <select id="dataset-select"></select>
+    </div>
+    <div>
+      <label>X axis</label><br>
+      <select id="x-select"></select>
+    </div>
+    <div>
+      <label>Y axis</label><br>
+      <select id="y-select"></select>
+    </div>
+    <div>
+      <label>Color</label><br>
+      <select id="color-select"></select>
+    </div>
+    <div class="search-wrap">
+      <label>Search</label><br>
+      <span class="search-icon">&#x1F50D;</span>
+      <input type="text" id="search" placeholder="Role name...">
+    </div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="scatter-panel">
+    <div id="scatter"></div>
+  </div>
+  <div class="detail-panel" id="detail-panel">
+    <div class="no-selection" id="no-selection">Click a role to see details</div>
+    <div id="detail-content" style="display:none">
+      <div class="detail-header">
+        <h2 id="role-name"></h2>
+        <div class="desc" id="role-desc"></div>
+      </div>
+      <div class="scores-grid" id="scores-grid"></div>
+      <div class="examples" id="examples"></div>
+    </div>
+  </div>
+</div>
+
+<div class="stats-bar" id="stats-bar"></div>
+
+<script>
+const AXIS_LABELS = {
+  pc1: 'PC1', pc2: 'PC2', pc3: 'PC3', pc4: 'PC4', pc5: 'PC5', contrast: 'Contrast'
+};
+
+let DATA = null;
+let currentDataset = null;
+
+async function init() {
+  const resp = await fetch('data/viewer_data.json');
+  DATA = await resp.json();
+
+  // Populate dataset selector
+  const dsel = document.getElementById('dataset-select');
+  for (const [key, ds] of Object.entries(DATA.datasets)) {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = `${ds.model} — ${ds.roleset} (${ds.n_roles})`;
+    dsel.appendChild(opt);
+  }
+
+  // Populate axis selectors
+  const axes = ['pc1', 'pc2', 'pc3', 'pc4', 'pc5', 'contrast'];
+  for (const selId of ['x-select', 'y-select', 'color-select']) {
+    const sel = document.getElementById(selId);
+    for (const ax of axes) {
+      const opt = document.createElement('option');
+      opt.value = ax;
+      opt.textContent = AXIS_LABELS[ax];
+      sel.appendChild(opt);
+    }
+  }
+  document.getElementById('x-select').value = 'pc1';
+  document.getElementById('y-select').value = 'pc2';
+  document.getElementById('color-select').value = 'pc1';
+
+  // Events
+  dsel.addEventListener('change', () => loadDataset(dsel.value));
+  document.getElementById('x-select').addEventListener('change', updatePlot);
+  document.getElementById('y-select').addEventListener('change', updatePlot);
+  document.getElementById('color-select').addEventListener('change', updatePlot);
+  document.getElementById('search').addEventListener('input', updatePlot);
+
+  loadDataset(Object.keys(DATA.datasets)[0]);
+}
+
+function loadDataset(key) {
+  currentDataset = DATA.datasets[key];
+  document.getElementById('dataset-select').value = key;
+  updateStatsBar();
+  updatePlot();
+  clearDetail();
+}
+
+function updateStatsBar() {
+  const ds = currentDataset;
+  const bar = document.getElementById('stats-bar');
+  bar.innerHTML = [
+    `<div class="stat">Roles: <span class="val">${ds.n_roles}</span></div>`,
+    `<div class="stat">PC1: <span class="val">${ds.pca_variance[0]}%</span></div>`,
+    `<div class="stat">Dims for 70%: <span class="val">${ds.dims_70}</span></div>`,
+    `<div class="stat">Text R\u00b2: <span class="val">${ds.text_r2}</span></div>`,
+    `<div class="stat">Model: <span class="val">${ds.model}</span></div>`,
+  ].join('');
+}
+
+function updatePlot() {
+  const ds = currentDataset;
+  const xAxis = document.getElementById('x-select').value;
+  const yAxis = document.getElementById('y-select').value;
+  const colorAxis = document.getElementById('color-select').value;
+  const search = document.getElementById('search').value.toLowerCase();
+
+  const roles = ds.roles;
+  const x = roles.map(r => r.scores[xAxis]);
+  const y = roles.map(r => r.scores[yAxis]);
+  const colors = roles.map(r => r.scores[colorAxis]);
+  const names = roles.map(r => r.name);
+  const descs = roles.map(r => r.description || '');
+
+  // Search: highlight matches
+  const hasSearch = search.length > 0;
+  const opacity = roles.map(r =>
+    hasSearch ? (r.name.toLowerCase().includes(search) ? 1.0 : 0.12) : 0.75
+  );
+  const sizes = roles.map(r =>
+    hasSearch && r.name.toLowerCase().includes(search) ? 12 : 7
+  );
+
+  // Hover text
+  const hovertext = roles.map(r => {
+    const pctiles = Object.entries(r.percentiles || {})
+      .map(([k, v]) => `${AXIS_LABELS[k]}: ${v}th`)
+      .join('<br>');
+    return `<b>${r.name}</b><br>${r.description ? r.description.substring(0, 80) + '...' : ''}<br><br>${pctiles}`;
+  });
+
+  // Role trace
+  const roleTrace = {
+    x, y,
+    mode: 'markers',
+    type: 'scatter',
+    marker: {
+      color: colors,
+      colorscale: 'RdYlBu',
+      reversescale: true,
+      size: sizes,
+      opacity,
+      line: { width: 0.5, color: 'rgba(255,255,255,0.3)' },
+      colorbar: { title: AXIS_LABELS[colorAxis], thickness: 12, len: 0.5 },
+    },
+    text: names,
+    hovertext,
+    hoverinfo: 'text',
+    name: 'Roles',
+    customdata: roles.map((_, i) => i),
+  };
+
+  // Default trace
+  const defX = ds.default.scores[xAxis];
+  const defY = ds.default.scores[yAxis];
+  const defaultTrace = {
+    x: [defX], y: [defY],
+    mode: 'markers+text',
+    type: 'scatter',
+    marker: { size: 18, color: '#f85149', symbol: 'star', line: { width: 1.5, color: 'white' } },
+    text: ['DEFAULT'],
+    textposition: 'top right',
+    textfont: { size: 11, color: '#f85149', family: 'monospace' },
+    hovertext: [`<b>Default (no system prompt)</b><br>${AXIS_LABELS[xAxis]}: ${defX.toFixed(1)}<br>${AXIS_LABELS[yAxis]}: ${defY.toFixed(1)}`],
+    hoverinfo: 'text',
+    name: 'Default',
+    showlegend: false,
+  };
+
+  // Capping threshold (25th percentile on contrast axis)
+  const shapes = [];
+  if (xAxis === 'contrast') {
+    const contrastVals = roles.map(r => r.scores.contrast);
+    contrastVals.sort((a, b) => a - b);
+    const thresh = contrastVals[Math.floor(contrastVals.length * 0.25)];
+    shapes.push({
+      type: 'line', x0: thresh, x1: thresh, y0: 0, y1: 1, yref: 'paper',
+      line: { color: '#3fb950', width: 2, dash: 'dash' },
+    });
+  }
+  if (yAxis === 'contrast') {
+    const contrastVals = roles.map(r => r.scores.contrast);
+    contrastVals.sort((a, b) => a - b);
+    const thresh = contrastVals[Math.floor(contrastVals.length * 0.25)];
+    shapes.push({
+      type: 'line', y0: thresh, y1: thresh, x0: 0, x1: 1, xref: 'paper',
+      line: { color: '#3fb950', width: 2, dash: 'dash' },
+    });
+  }
+
+  // Label extremes on x-axis
+  const annotations = [];
+  const sortedByX = [...roles].sort((a, b) => a.scores[xAxis] - b.scores[xAxis]);
+  const extremeCount = Math.min(5, Math.floor(roles.length / 20));
+  for (const r of sortedByX.slice(0, extremeCount)) {
+    annotations.push({
+      x: r.scores[xAxis], y: r.scores[yAxis], text: r.name,
+      showarrow: false, font: { size: 9, color: '#8b949e' },
+      xanchor: 'left', yanchor: 'bottom', xshift: 4,
+    });
+  }
+  for (const r of sortedByX.slice(-extremeCount)) {
+    annotations.push({
+      x: r.scores[xAxis], y: r.scores[yAxis], text: r.name,
+      showarrow: false, font: { size: 9, color: '#8b949e' },
+      xanchor: 'right', yanchor: 'top', xshift: -4,
+    });
+  }
+
+  const xVar = ds.pca_variance[parseInt(xAxis.replace('pc','')) - 1] || '';
+  const yVar = ds.pca_variance[parseInt(yAxis.replace('pc','')) - 1] || '';
+
+  const layout = {
+    paper_bgcolor: '#0d1117',
+    plot_bgcolor: '#0d1117',
+    font: { color: '#e6edf3' },
+    xaxis: {
+      title: `${AXIS_LABELS[xAxis]}${xVar ? ' (' + xVar + '%)' : ''}`,
+      gridcolor: '#21262d', zerolinecolor: '#30363d',
+    },
+    yaxis: {
+      title: `${AXIS_LABELS[yAxis]}${yVar ? ' (' + yVar + '%)' : ''}`,
+      gridcolor: '#21262d', zerolinecolor: '#30363d',
+    },
+    shapes,
+    annotations,
+    margin: { l: 60, r: 20, t: 20, b: 50 },
+    hovermode: 'closest',
+  };
+
+  Plotly.react('scatter', [roleTrace, defaultTrace], layout, {
+    responsive: true,
+    displayModeBar: true,
+    modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
+  });
+
+  // Click handler
+  document.getElementById('scatter').removeAllListeners?.('plotly_click');
+  document.getElementById('scatter').on('plotly_click', (event) => {
+    const pt = event.points[0];
+    if (pt.data.name === 'Roles' && pt.customdata !== undefined) {
+      showDetail(ds.roles[pt.customdata]);
+    }
+  });
+}
+
+function showDetail(role) {
+  document.getElementById('no-selection').style.display = 'none';
+  document.getElementById('detail-content').style.display = 'block';
+
+  document.getElementById('role-name').textContent = role.name;
+  document.getElementById('role-desc').textContent = role.description || 'No description available.';
+
+  // Scores
+  const grid = document.getElementById('scores-grid');
+  grid.innerHTML = '';
+  for (const [ax, val] of Object.entries(role.scores)) {
+    const pctile = role.percentiles?.[ax];
+    const card = document.createElement('div');
+    card.className = 'score-card';
+    const color = val > 0 ? '#f85149' : val < 0 ? '#58a6ff' : '#8b949e';
+    card.innerHTML = `
+      <div class="label">${AXIS_LABELS[ax]}</div>
+      <div class="value" style="color:${color}">${val > 0 ? '+' : ''}${val.toFixed(1)}</div>
+      ${pctile !== undefined ? `<div class="pctile">${pctile}th %ile</div>` : ''}
+    `;
+    grid.appendChild(card);
+  }
+
+  // Examples
+  const exDiv = document.getElementById('examples');
+  exDiv.innerHTML = '';
+  if (role.examples && role.examples.length > 0) {
+    exDiv.innerHTML = '<h3>Model responses as this role</h3>';
+    for (const ex of role.examples) {
+      const div = document.createElement('div');
+      div.className = 'example';
+      div.innerHTML = `
+        <div class="q">Q: ${escapeHtml(ex.question)}</div>
+        <div class="a">${escapeHtml(ex.response)}</div>
+      `;
+      exDiv.appendChild(div);
+    }
+  } else {
+    exDiv.innerHTML = '<h3>No example responses available</h3><p style="color:var(--dim);font-size:13px">Example responses are available for K2.5 datasets only.</p>';
+  }
+}
+
+function clearDetail() {
+  document.getElementById('no-selection').style.display = 'block';
+  document.getElementById('detail-content').style.display = 'none';
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>
