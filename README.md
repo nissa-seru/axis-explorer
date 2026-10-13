@@ -36,13 +36,15 @@ The page fetches its data file, so serve it over HTTP rather than opening `index
 npm start
 ```
 
-Then open http://localhost:3000. Set `PORT` to use another port. When you set `SITE_PASSWORD`, the server asks for HTTP basic auth with that password and the user name `admin` or an empty one.
+Then open http://localhost:3000. The server listens on every network interface, at port 3000 unless you set `PORT`. When you set `SITE_PASSWORD`, the server asks for HTTP basic auth with that password and the user name `admin` or an empty one.
 
-In the Docker image, the server listens on port 3000. To require the password there, add `-e SITE_PASSWORD=...` to `docker run`.
+In the Docker image, the server listens on port 3000. This publishes it on the loopback address only:
 
 ```sh
 docker build -t axis-explorer .
-docker run -p 3000:3000 axis-explorer
+docker run -p 127.0.0.1:3000:3000 axis-explorer
 ```
 
-A static file server run from the repository's root also works, without the password check, such as `python3 -m http.server` (then open http://localhost:8000).
+Then open http://127.0.0.1:3000. To require the password there, add `-e SITE_PASSWORD=...` to `docker run`.
+
+A static file server run from the repository's root also works, without the password check, such as `python3 -m http.server --bind 127.0.0.1` (then open http://127.0.0.1:8000).
